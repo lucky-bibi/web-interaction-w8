@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Face Puzzle Interaction — Fixed (No missing pieces)</title>
+
+<link href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.css" rel="stylesheet">
+<style>
+  body {
+    font-family: 'Noto Sans KR', sans-serif;
+    margin: 0;
+    background: #f5f5f5;
+    overflow: hidden;
+  }
+
+  #uploadSection {
+    display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;
+    background:url('bg.jpg')center/cover;
+    color:#000;text-align:center;padding:1rem;
+  }
+  h1 img {width: 760px;}
+  input[type="file"]{margin:.5rem 0}
+  #generateBtn{background:rgba(255,255,255,0.95);border:none;padding:.6rem 1.2rem;border-radius:8px;cursor:pointer;font-weight:600}
+
+  #cropModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;align-items:center;justify-content:center}
+  #cropContainer{width:90vw;max-width:900px;background:#fff;padding:12px;border-radius:8px;text-align:center}
+  #cropContainer img{max-width:100%;display:block;margin:0 auto}
+  #cropControls{margin-top:8px;display:flex;gap:8px;justify-content:center}
+  #cropBtn,#cropCancel{padding:.5rem .9rem;border-radius:6px;border:none;cursor:pointer}
+  #cropBtn{background:#111;color:#fff} #cropCancel{background:#eee}
+
+  #puzzleSection{display:none;position:relative;width:100vw;height:100vh;background:#111;overflow:hidden}
+  .piece{position:absolute;border:1px solid rgba(255,255,255,.55);box-shadow:0 0 6px rgba(0,0,0,.5);cursor:grab;transition:transform .12s;touch-action:none}
+  .piece:active{cursor:grabbing;transform:scale(1.04)}
+</style>
+</head>
+<body>
+
+<div id="uploadSection">
+  <h1><img src="title.png" alt="나의 얼굴 퍼즐 만들기"></h1>
+  <p>내 얼굴 사진과 바꾸고 싶은 얼굴 사진을 업로드하세요.</p>
+  <input type="file" id="myFace" accept="image/*"><br>
+  <input type="file" id="idealFace" accept="image/*"><br>
+  <button id="generateBtn">얼굴 조각 생성하기</button>
+</div>
+
+<div id="cropModal">
+  <div id="cropContainer">
+    <p id="cropTitle">얼굴 영역만 선택해 주세요.</p>
+    <div style="max-height:70vh;overflow:auto;">
+      <img id="cropImage" alt="crop target">
+    </div>
+    <div id="cropControls">
+      <button id="cropBtn">자르기 완료</button>
+      <button id="cropCancel">취소</button>
+    </div>
+  </div>
+</div>
+
+<div id="puzzleSection"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.js"></script>
+<script>
+/* 설정값 */
+const PUZZLE_COLS = 4;
+const PUZZLE_ROWS = 4;
+const CROPPED_SIZE = 600;    // 크롭한 원본 사이즈 (정사각)
+const DISPLAY_MAX_RATIO = 0.8; // 화면 대비 퍼즐 최대 비율
+
+/* DOM */
+const myInput = document.getElementById('myFace');
+const idealInput = document.getElementById('idealFace');
+const generateBtn = document.getElementById('generateBtn');
+const uploadSection = document.getElementById('uploadSection');
+const cropModal = document.getElementById('cropModal');
+const cropImage = document.getElementById('cropImage');
+const cropBtn = document.getElementById('cropBtn');
+const cropCancel = document.getElementById('cropCancel');
+const puzzleSection = document.getElementById('puzzleSection');
+
+let cropper = null;
+let currentTargetKey = null; // 'my'|'ideal'
+let objectURLs = { my: null, ideal: null };
+let croppedData = { my: null, ideal: null };
+
+/* 파일 선택 => 크롭 모달 열기 */
+myInput.addEventListener('change', (e) => openCrop(e, 'my'));
+idealInput.addEventListener('change', (e) => openCrop(e, 'ideal'));
+
+function openCrop(e, key) {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (objectURLs[key]) URL.revokeObjectURL(objectURLs[key]);
+  const url = URL.createObjectURL(file);
+  objectURLs[key] = url;
+  currentTargetKey = key;
+  cropImage.src = url;
+  cropModal.style.display = 'flex';
+  if (cropper) { try { cropper.destroy(); } catch(_){} cropper = null; }
+  cropImage.onload = () => {
+    // 안정적으로 초기화
+    setTimeout(()=> {
+      cropper = new Cropper(cropImage, {
+        aspectRatio: 1,
+        viewMode: 1,
+        dragMode: 'move',
+        background: false,
+        autoCropArea: 1
+      });
+    }, 30);
+  };
+}
+
+/* 크롭 완료 */
+cropBtn.addEventListener('click', () => {
+  if (!cropper || !currentTargetKey) return;
+  const canvas = cropper.getCroppedCanvas({ width: CROPPED_SIZE, height: CROPPED_SIZE });
+  croppedData[currentTargetKey] = canvas.toDataURL('image/jpeg', 0.92);
+  cropper.destroy();
+  cropper = null;
+  currentTargetKey = null;
+  cropModal.style.display = 'none';
+});
+
+/* 크롭 취소 */
+cropCancel.addEventListener('click', () => {
+  if (cropper) { try { cropper.destroy(); } catch(_){} cropper = null; }
+  if (currentTargetKey === 'my') myInput.value = '';
+  if (currentTargetKey === 'ideal') idealInput.value = '';
+  currentTargetKey = null;
+  cropModal.style.display = 'none';
+});
+
+/* 퍼즐 생성 */
+generateBtn.addEventListener('click', async () => {
+  if (!croppedData.my || !croppedData.ideal) return alert('두 이미지를 모두 업로드하고 자르기(확인)를 해주세요.');
+  // 인터페이스 전환
+  uploadSection.style.display = 'none';
+  puzzleSection.style.display = 'block';
+  const myImg = await loadImage(croppedData.my);
+  const idealImg = await loadImage(croppedData.ideal);
+  createPuzzle(myImg, idealImg);
+});
+
+function loadImage(src) {
+  return new Promise((resolve,reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+/* 수정된 createPuzzle — 누락 방지, 정수 연산, 중앙 정렬 */
+function createPuzzle(myImg, idealImg) {
+  puzzleSection.innerHTML = '';
+  const totalPieces = PUZZLE_COLS * PUZZLE_ROWS;
+
+  // 원본(크롭) 사이즈 기준
+  const imgSize = CROPPED_SIZE; // myImg and idealImg are CROPPED_SIZE x CROPPED_SIZE
+  const srcPieceW = Math.floor(imgSize / PUZZLE_COLS);
+  const srcPieceH = Math.floor(imgSize / PUZZLE_ROWS);
+
+  // 화면에 보일 최대 퍼즐 크기 (정사각)
+  const maxDisplay = Math.floor(Math.min(window.innerWidth, window.innerHeight) * DISPLAY_MAX_RATIO);
+  // scale 비율 (display에서 원본 이미지 크기로 매핑)
+  const scale = Math.min(1, maxDisplay / imgSize);
+  const displaySize = Math.max(1, Math.round(imgSize * scale)); // 정수
+  const displayPieceW = Math.max(1, Math.round(displaySize / PUZZLE_COLS));
+  const displayPieceH = Math.max(1, Math.round(displaySize / PUZZLE_ROWS));
+
+  const startX = Math.round((window.innerWidth - displaySize) / 2);
+  const startY = Math.round((window.innerHeight - displaySize) / 2);
+
+  // ensure we create exactly totalPieces
+  for (let i = 0; i < totalPieces; i++) {
+    const y = Math.floor(i / PUZZLE_COLS);
+    const x = i % PUZZLE_COLS;
+
+    const canvas = document.createElement('canvas');
+    // canvas pixel buffer size (use display size, but keep integer)
+    canvas.width = displayPieceW;
+    canvas.height = displayPieceH;
+    canvas.className = 'piece';
+    const ctx = canvas.getContext('2d');
+
+    // choose source: first half myImg, second half idealImg (balanced)
+    const srcImg = (i < totalPieces/2) ? myImg : idealImg;
+
+    // source slice coords must be integers and cover whole image
+    const sx = Math.round(x * srcPieceW);
+    const sy = Math.round(y * srcPieceH);
+    // For last column/row, ensure we capture any remaining pixels (avoid missing right/bottom edge)
+    const sWidth = (x === PUZZLE_COLS - 1) ? (imgSize - sx) : srcPieceW;
+    const sHeight = (y === PUZZLE_ROWS - 1) ? (imgSize - sy) : srcPieceH;
+
+    // draw slice scaled to displayPieceW/H
+    ctx.drawImage(srcImg, sx, sy, sWidth, sHeight, 0, 0, displayPieceW, displayPieceH);
+
+    // random initial position within puzzle bounding square so pieces are visible (not offscreen)
+    const maxX = Math.max(0, displaySize - displayPieceW);
+    const maxY = Math.max(0, displaySize - displayPieceH);
+    const randX = startX + Math.floor(Math.random() * (maxX + 1));
+    const randY = startY + Math.floor(Math.random() * (maxY + 1));
+    canvas.style.left = randX + 'px';
+    canvas.style.top = randY + 'px';
+
+    // visual outline
+    canvas.style.border = '1px solid rgba(255,255,255,0.75)';
+    canvas.style.boxSizing = 'border-box';
+
+    enableDrag(canvas);
+    puzzleSection.appendChild(canvas);
+  }
+}
+
+/* 드래그 — 부드럽고 선택 시 앞으로 */
+function enableDrag(el) {
+  let offsetX=0, offsetY=0, dragging=false;
+
+  const onDown = (e) => {
+    e.preventDefault();
+    dragging = true;
+    const clientX = (e.touches ? e.touches[0].clientX : e.clientX);
+    const clientY = (e.touches ? e.touches[0].clientY : e.clientY);
+    const rect = el.getBoundingClientRect();
+    offsetX = clientX - rect.left;
+    offsetY = clientY - rect.top;
+    el.style.zIndex = String(getHighestZ() + 1);
+  };
+
+  const onMove = (e) => {
+    if (!dragging) return;
+    const clientX = (e.touches ? e.touches[0].clientX : e.clientX);
+    const clientY = (e.touches ? e.touches[0].clientY : e.clientY);
+    el.style.left = (clientX - offsetX) + 'px';
+    el.style.top = (clientY - offsetY) + 'px';
+  };
+
+  const onUp = () => { dragging = false; };
+
+  el.addEventListener('mousedown', onDown);
+  el.addEventListener('touchstart', onDown, {passive:false});
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('touchmove', onMove, {passive:false});
+  window.addEventListener('mouseup', onUp);
+  window.addEventListener('touchend', onUp);
+}
+
+function getHighestZ(){
+  let max=0;
+  document.querySelectorAll('.piece').forEach(p=>{
+    const z = parseInt(window.getComputedStyle(p).zIndex) || 0;
+    if (z>max) max=z;
+  });
+  return max;
+}
+</script>
+</body>
+</html>
